@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Video PeerEval</title>
+    <!--Bulma CDN-->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.0/css/bulma.min.css">
+    <!--Vue CDN-->
+    <script src="https://cdn.jsdelivr.net/npm/vue"></script>
+    <!--Buefy CDN-->
+    <link rel="stylesheet" href="https://unpkg.com/buefy/dist/buefy.min.css">
+    <script src="https://unpkg.com/buefy/dist/buefy.min.js"></script>
+    <!--Axios CDN-->
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <!--Font Awesome CDN-->
+    <script defer src="https://use.fontawesome.com/releases/v5.3.1/js/all.js"></script>
+</head>
+
+<body>
+    <div id="vComment">
+        <div class="has-text-centered" style="margin-bottom: 25px;">
+            <h1 class="title">Video PeerEval</h1>
+            <p class="subtitle">Improve by helping peers</p>
+            <button class="button is-primary is-light" v-on:click="isSubmitFormActive = true">Submit a video</button>
+            <b-modal :active.sync="isSubmitFormActive" has-modal-card trap-focus :destroy-on-hide="false"
+                aria-role="dialog" aria-modal>
+                <video-submit-form v-on:submitted="submitRefresh()"></video-submit-form>
+            </b-modal>
+        </div>
+
+
+        <div class="columns">
+            <div class="column is-1"></div>
+            <div class="column">
+                <div v-for="row in videosList">
+                    <video-row v-bind:vrow="row" v-on:open-video="openVideo"></video-row>
+                </div>
+                <b-modal :active.sync="isVideoActive" has-modal-card trap-focus :destroy-on-hide="false"
+                    aria-role="dialog" aria-modal destroy-on-hide="true">
+                    <video-player v-bind:video2open="openedVideo"></video-player>
+                </b-modal>
+            </div>
+            <div class="column is-1"></div>
+        </div>
+    </div>
+    <script>
+        // Youtube API
+        var tag = document.createElement('script');
+
+        tag.src = "https://www.youtube.com/iframe_api";
+        var firstScriptTag = document.getElementsByTagName('script')[0];
+        firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+        // videoPlayer component
+        const videoPlayer = Vue.component("video-player", {
+            data: function () {
+                return {
+                    openedVideo: JSON.parse(JSON.stringify(this.video2open)),
+                    player: null,
+                    viewerCommentText: "",
+                    viewerName: ""
+                }
+            },
+            computed: {
+                opendedVideoLink: function () {
+                    if (this.openedVideo != null) {
+                        return "https://www.youtube.com/embed/" + this.openedVideo.videoId + '?showinfo=0&enablejsapi=1';
+                    } else {
+                        return null
+                    }
+                }
+            },
+            template: `
+            <div class="modal-card" style="width: 1080px; height: 550px">
+                <section class="modal-card-body" style="overflow: hidden;">
+                    <div class="columns">
+                        <div class="column is-three-quarters">
+                            <figure class="image is-16by9">
+                                <iframe id="ytplayer" class="has-ratio" width="640" height="360"
+                                    v-bind:src='opendedVideoLink' frameborder="0"></iframe>
+                            </figure>
+                            <p>Leave a short comment for a specific point in the video.</p>
+                            <b-field>
+                                <b-input maxlength="150" expanded placeholder="Enter your comment" v-model="viewerCommentText"></b-input>
+                                <b-input maxlength="10" placeholder="Enter your name" v-model="viewerName"></b-input>
+                                <p class="control">
+                                    <button class="button is-primary" v-on:click="submitComment()">Add Comment Here</button>
+                                </p>
+                            </b-field>
+                        </div>
+                        <div class="column is-one-quarter" style="overflow-y: scroll;height:520px">
+                            <div class="box" 
+                                v-for="comment in openedVideo.comments" 
+                                v-on:click="jumpToComment(comment.commentTimeStamp.$numberLong)"
+                                style="cursor: pointer">
+                                <p>
+                                <b>{{ comment.commenterName }} @ {{ comment.commentTimeStamp.$numberLong }} s →</b>
+                                </p>
+                                <p>{{ comment.commentText }}</p>
+                            </div>
+                            <!--To make sure all comments will be visible-->
+                            <p></br></br></br></p>
+                        </div>
+                    </div>
+                </section>
+            </div>
+            `,
+            mounted: function () {
+                this.player = new YT.Player('ytplayer', {
+                    events: {
+                    }
+                });
+                this.sortComments(this.openedVideo.comments);
+            },
+            methods: {
+                jumpToComment: function (timeStamp) {
+                    var time = parseInt(timeStamp);
+                    this.player.seekTo(time);
+                    this.player.playVideo();
+                },
+
+                submitComment: function () {
+                    let videoId = this.openedVideo.videoId;
+                    let comment = this.viewerCommentText;
+                    let timeStamp = Math.round(this.player.getCurrentTime());
+                    let commenterName = this.viewerName;
+                    if (videoId && comment && timeStamp && commenterName) {
+                        this.postComment(videoId, timeStamp, comment, commenterName);
+                    } else {
+                        alert("Please input a valid comment and name before submitting.")
+                    }
+                },
+
+                postComment: function (videoId, timeStamp, comment, commenterName) {
+                    var apiURL = "https://webhooks.mongodb-realm.com/api/client/v2.0/app/videocommentapp_stephan-svgnl/service/videoHttpStephan/incoming_webhook/postComment"
+                    const params = new URLSearchParams();
+                    params.append("videoIdParam", videoId);
+                    params.append("commentTimeStampParam", timeStamp);
+                    params.append("commentTextParam", comment);
+                    params.append("commenterNameParam", commenterName);
+                    _this = this;
+                    axios.post(apiURL, params)
+                        .then(function (response) {
+                            if (response.data == "Comment Posted") {
+                                _this.localPostComment(videoId, timeStamp, comment, commenterName);
+                                alert("Comment Posted.");
+                            } else if (response.data == "Error") {
+                                alert("An error occurred. Please try again.");
+                            }
+                        })
+                },
+
+                localPostComment: function (videoId, timeStamp, comment, commenterName) {
+                    this.openedVideo.comments.push(
+                        {
+                            "commentTimeStamp": {
+                                "$numberLong": timeStamp
+                            },
+                            "commentText": comment,
+                            "commenterName": commenterName
+                        }
+                    );
+                    this.viewerCommentText = "";
+                    this.viewerName = "";
+                    this.sortComments(this.openedVideo.comments);
+                },
+
+                sortComments: function (comments) {
+                    let sortedComments;
+                    sortedComments = comments.sort(function (a, b) { return (a.commentTimeStamp.$numberLong - b.commentTimeStamp.$numberLong) });
+                    this.openedVideo.comments = sortedComments;
+                }
+            },
+            props: ["video2open"]
+        });
+
+        // video-row component
+        Vue.component("video-row", {
+            data: function () {
+                return {
+                }
+            },
+            template: `
+                <div class="tile is-ancestor">
+                    <div class="tile is-parent is-3" v-for="video in vrow">
+                        <article class="tile is-child box" v-on:click="$emit('open-video',video.id)" style="cursor: pointer">
+                            <figure class="image is-4by3">
+                                <img v-bind:src=video.thumbnail>
+                            </figure>
+                            <p class="title is-5"> {{ video.title }} </p>
+                        </article>
+                    </div>
+                </div>
+            `,
+            props: ["vrow"] //props have to be lower-case
+        });
+
+        // submit video component
+        const videoForm = Vue.component("video-submit-form", {
+            data: function () {
+                return {
+                    videoLink: "Enter a valid YouTube video link"
+                }
+            },
+            template: `
+            <div class="modal-card" style="width: auto">
+                <header class="modal-card-head">
+                    <p class="modal-card-title">Submit Video</p>
+                </header>
+                <section class="modal-card-body">
+                    <b-field label="Link to YouTube Video">
+                        <b-input
+                            type="videoLink"
+                            v-model="videoLink"
+                            placeholder="Enter a valid YouTube video link"
+                            required>
+                        </b-input>
+                    </b-field>
+                </section>
+                <footer class="modal-card-foot">
+                    <button class="button" type="button" @click="$parent.close()">Close</button>
+                    <button class="button is-primary" @click="submitVideo()">Submit Video</button>
+                </footer>
+            </div>
+    `,
+            methods: {
+                submitVideo: function () {
+                    var videoLink = this.videoLink;
+                    var videoId = this.youtubeUrlToId(videoLink);
+                    var _this = this;
+                    if (videoId) {
+                        var apiURL = "https://webhooks.mongodb-realm.com/api/client/v2.0/app/videocommentapp_stephan-svgnl/service/videoHttpStephan/incoming_webhook/postVideo"
+                        const params = new URLSearchParams();
+                        params.append("videoIdParam", videoId)
+                        axios.post(apiURL, params)
+                            .then(function (response) {
+                                if (response.data == "Video already existed.") {
+                                    alert("Video already existed.");
+                                } else if (response.data == "Error") {
+                                    alert("An error occurred. Please try again.");
+                                } else {
+                                    _this.$emit('submitted');
+                                    alert("Video Submitted.");
+                                }
+                            })
+                    } else {
+                        alert("Please enter a valid YouTube link.");
+                    }
+                },
+
+                validVideoId: function (id) {
+                    var img = new Image();
+                    img.src = "http://img.youtube.com/vi/" + id + "/mqdefault.jpg";
+                    img.onload = function () {
+                        return this.checkThumbnail(this.width);
+                    }
+                },
+
+                checkThumbnail: function (width) {
+                    //HACK a mq thumbnail has width of 320.
+                    //if the video does not exist(therefore thumbnail don't exist), a default thumbnail of 120 width is returned.
+                    if (width === 120) {
+                        return false;
+                    } else {
+                        return true;
+                    }
+                },
+
+                youtubeUrlToId: function (url) {
+                    if (url != undefined || url != '') {
+                        var regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=|\?v=)([^#\&\?]*).*/;
+                        var match = url.match(regExp);
+                        if (match && match[2].length == 11) {
+                            return match[2];
+                        } else {
+                            return false
+                        }
+                    }
+                }
+            }
+        });
+
+        // main app
+        var vCommentApp = new Vue({
+            el: "#vComment",
+            data: {
+                allVideos: [],
+                videosList: [],
+                isSubmitFormActive: false,
+                isVideoActive: false,
+                openedVideo: null
+            },
+            watch: {
+                allVideos: function (allVideos) {
+                    var rawList = [];
+                    var vList = [];
+                    var promises = [];
+                    for (let i = 0; i < allVideos.length; i++) {
+                        let videoId = allVideos[i].videoId;
+                        apiURL = "https://www.googleapis.com/youtube/v3/videos?part=snippet%2CcontentDetails%2Cstatistics&id=" + videoId + "&key=AIzaSyBNKUKtcnO5tS-R5jIWqPa7OXfXo88dc_A";
+                        promises.push(
+                            axios
+                                .get(apiURL)
+                                .then(response => {
+                                    rawList.push(response.data);
+                                })
+                        );
+                    };
+                    Promise.all(promises).then(() => {
+                        for (let i = 0; i < rawList.length; i++) {
+                            vList.push(this.parseVideo(rawList[i]));
+                        };
+                        vList = this.chunk(vList, 4);
+                        this.videosList = vList;
+                    });
+
+                }
+            },
+            mounted: function () {
+                this.fetchAll();
+            },
+            methods: {
+                fetchAll: function () {
+                    apiURL = "https://cors-anywhere.herokuapp.com/https://webhooks.mongodb-realm.com/api/client/v2.0/app/videocommentapp_stephan-svgnl/service/videoHttpStephan/incoming_webhook/getAll";
+                    axios
+                        .get(apiURL)
+                        .then(response => (this.allVideos = response.data));
+                },
+                parseVideo: function (video) {
+                    let parsedVideo = {
+                        title: "",
+                        id: "",
+                        thumbnail: ""
+                    };
+                    parsedVideo.title = video.items[0].snippet.title;
+                    parsedVideo.id = video.items[0].id
+                    parsedVideo.thumbnail = video.items[0].snippet.thumbnails.high.url;
+                    return parsedVideo
+                },
+                chunk: function (array, size) {
+                    const chunked_arr = [];
+                    for (let i = 0; i < array.length; i++) {
+                        const last = chunked_arr[chunked_arr.length - 1];
+                        if (!last || last.length === size) {
+                            chunked_arr.push([array[i]]);
+                        } else {
+                            last.push(array[i]);
+                        }
+                    }
+                    return chunked_arr;
+                },
+
+                submitRefresh: function () {
+                    console.log("submitted refresh");
+                    this.fetchAll();
+                },
+
+                openVideo: function (videoId) {
+                    let apiURL = "https://webhooks.mongodb-realm.com/api/client/v2.0/app/videocommentapp_stephan-svgnl/service/videoHttpStephan/incoming_webhook/getVideo?videoIdParam=" + videoId;
+                    _this = this;
+                    axios
+                    .get(apiURL)
+                    .then(response => {
+                        _this.openedVideo = response.data;
+                        this.isVideoActive = true;
+                    })
+                }
+            },
+            components: {
+                videoForm,
+                videoPlayer
+            }
+        });
+    </script>
+</body>
+<footer class="footer">
+    <div class="content has-text-centered">
+        <p>
+            Designed with <span class="icon"><i class="fas fa-heart"></i></span> and Coded with <span.icon><i
+                    class="fas fa-coffee"></i></span.icon> by <a href="https://www.guodong-zhao.com/"
+                target="_blank">Guodong Zhao</a> <br/>
+        </p>
+        <p>
+            Link to <a href="https://github.com/Troyanovsky/videoComment">GitHub Repo</a>
+        </p>
+    </div>
+</footer>
+</html>
